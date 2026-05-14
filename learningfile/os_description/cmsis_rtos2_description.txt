@@ -1,0 +1,725 @@
+SVC异常是必须立即得到响应的（若因优先级不比当前正处理的高，或是其它原因使之无法立即响应，将发生硬 fault——译者注）
+如果线程定义结构中的堆栈大小值设置为零，则将默认堆栈大小分配给线程
+1 互斥信号定义
+volatile osRtxMutex_t  Spi_Muttex_tcb;//定义内存大小位置，自动分配不需定义
+const osMutexAttr_t Spi_Mutex_attr={
+	.name = "SpiMutex",
+	.attr_bits = 0,
+	.cb_mem =(void*)&Spi_Muttex_tcb,//自动分配写NULL
+  	.cb_size = sizeof(Spi_Muttex_tcb)//自动分配写0
+};
+osMutexId_t Spi_Muttex_ID;
+Spi_Muttex_ID = osMutexNew(&Spi_Mutex_attr);//创建互,括号写成NULL是自动分配成所有默认属性
+
+--------------------系统内核操作---------------------
+
+2 osStatus_t osKernelInitialize	(void )
+函数osKernelInitialize初始化 RTOS 内核。在成功执行之前，只能调用函数osKernelGetInfo和osKernelGetState
+可能的osStatus_t返回值：
+osOK如果成功。
+osError如果发生非特定错误。
+osErrorISR如果从中断服务程序调用。
+osErrorNoMemory如果无法为操作保留内存
+
+3 osStatus_t osKernelGetInfo	(osVersion_t * version,存放.kernel,.api版本号
+			char * 	id_buf,	 存放内核字符串信息的infobuf[100]指针
+			uint32_t 	id_size 	 infobuf的大小
+			)
+函数osKernelGetInfo检索底层 RTOS 内核的 API 和内核版本以及内核的人类可读标识符字符串。
+它可以在 RTOS 初始化或启动之前安全地调用（调用osKernelInitialize或osKernelStart）
+可能的osStatus_t返回值：
+osOK如果成功。
+osError如果发生非特定错误。
+
+4 osKernelState_t osKernelGetState(void )
+函数osKernelGetState返回内核的当前状态，并且可以在 RTOS 初始化或启动之前安全地调用
+可能的osKernelState_t返回值：
+osKernelError如果发生非特定错误。
+否则为实际内核状态(osKernelInactive(不活动，内核没准备好)osKernelReady，osKernelRunning，osKernelLocked(osKernelUnlock或osKernelRestoreLock)，osKernelSuspended(osKernelResume),\
+osKernelError,osKernelReserved(防止枚举缩小编译器优化)
+)
+
+5 osStatus_t osKernelStart(void 	)
+函数osKernelStart启动 RTOS 内核并开始线程切换。如果成功，它不会返回到它的调用函数
+可能的osStatus_t返回值：
+osError如果发生非特定错误。
+osErrorISR如果从中断服务程序调用。
+
+6 int32_t osKernelLock(void );int32_t osKernelUnlock(void)
+它返回锁定状态的先前值（如果已锁定则为1，如果已解锁则为0），否则返回表示错误代码的负数（请参阅osStatus_t）
+可能的osStatus_t返回值：
+osError如果发生非特定错误。
+osErrorISR如果从中断服务程序调用
+
+7 int32_t osKernelRestoreLock	(int32_t lock)
+lock:由osKernelLock或osKernelUnlock获得的锁状态
+函数osKernelRestoreLock在osKernelLock或osKernelUnlock之后恢复先前的锁定状态	
+它返回锁定状态的先前值（如果已锁定则为1，如果已解锁则为0），否则返回表示错误代码的负数（请参阅osStatus_t）
+可能的osStatus_t返回值：
+osError如果发生非特定错误。
+osErrorISR如果从中断服务程序调用
+
+8 uint32_t osKernelSuspend(void )
+函数osKernelSuspend挂起 RTX 内核调度程序，从而启用睡眠模式
+返回值可用于确定系统滴答的数量，直到下一个基于滴答的内核事件将发生，即延迟线程再次准备就绪。建议设置低功耗定时器，根据该返回值产生唤醒中断
+
+9 void osKernelResume(uint32_t sleep_ticks)
+函数osKernelResume启用 RTX 内核调度程序，从而将系统从睡眠模式唤醒。
+sleep_ticks	系统处于睡眠或断电模式的时间（以滴答为单位）
+
+10 uint32_t osKernelGetTickCount(void )
+函数osKernelGetTickCount返回当前的 RTOS 内核滴答计数
+
+11 uint32_t osKernelGetTickFreq(void )
+返回滴答频率（每秒滴答数）
+
+12  uint32_t osKernelGetSysTimerCount(void)
+系统频率计数值(一般用在对硬件初始化等到微秒级)
+
+13 uint32_t osKernelGetSysTimerFreq(void )
+系统设置的时钟频率（hclk）一般是72M
+
+--------------------线程管理---------------------
+线程可以处于以下状态：
+RUNNING：当前正在运行的线程处于RUNNING状态。一次只能有一个线程处于这种状态。
+READY：准备运行的线程处于READY状态。一旦RUNNING线程终止或被BLOCKED，具有最高优先级的下一个READY线程将成为RUNNING线程。
+BLOCKED：被延迟、等待事件发生或挂起的线程处于BLOCKED状态。
+TERMINATED：当osThreadTerminate被调用时，线程被终止，资源尚未释放（适用于可连接的线程）。
+INACTIVE：未创建或已终止并释放所有资源的线程处于INACTIVE状态。
+
+14 volatile osRtxThread_t Dis_thread1_tcb;//控制块内存
+     volatile uint64_t Dis_thread_stk[8*1024/8];//堆栈内存
+     const osThreadAttr_t Dis_attr = {
+	.name = "DisMain",		//线程名称
+  	.priority = osPriorityAboveNormal,  //优先级        
+	.cb_mem = (void*)&Dis_thread1_tcb,//控制块内存地址
+	.cb_size = sizeof(Dis_thread1_tcb),//控制块内存大小
+	.stack_mem = (void*)Dis_thread_stk,//线程堆栈内存
+	.stack_size = sizeof(Dis_thread_stk),//线程堆栈大小
+
+	.attr_bits=osThreadDetached,//属性位：osThreadDetached=0：以分离模式创建线程（默认）osThreadJoinable=1：在可连接模式下创建线程
+	.tz_module//TrustZone 模块标识符（uint32_t）
+	.reserved//保留（uint32_t）
+};
+osThreadId_t Dis_Task_Id;//线程ID（首地址指针）
+
+15 osThreadId_t osThreadNew	(osThreadFunc_t func,//函数指针，存放线程函数名
+			void * 	argument,//给线程传参数指针
+			const osThreadAttr_t * attr //线程属性
+			)
+返回线程ID（首地址）
+
+16 const char * osThreadGetName(osThreadId_t thread_id)
+返回线程名称字符串首地址
+不能从中断服务程序中调用此函数
+
+17 osThreadId_t osThreadGetId	(void )
+这个函数可以从中断服务程序中调用
+
+18 osThreadState_t osThreadGetState(osThreadId_t 	thread_id	)
+获取线程的状态
+返回 osThreadInactive（线程不存在），osThreadReady，osThreadRunning，osThreadBlocked，osThreadTerminated（线程被终止但内存未释放），osThreadError，osThreadReserved
+
+19 osStatus_t osThreadSetPriority( osThreadId_t 	thread_id,
+			     osPriority_t 	priority 
+)
+可能的osStatus_t返回值：
+osOK：指定线程的优先级已成功更改。
+osErrorParameter: thread_id为NULL或无效或优先级不正确。
+osErrorResource：线程处于无效状态。
+osErrorISR：无法从中断服务例程中调用函数osThreadSetPriority
+
+20 osPriority_t osThreadGetPriority(osThreadId_t  thread_id)
+可能的osPriority_t返回值：
+优先级：指定线程的优先级。
+osPriorityError:优先级无法确定或非法。从中断服务程序调用函数时也会返回它
+
+21 osStatus_t osThreadYield (void )
+函数osThreadYield将控制权传递给下一个具有相同优先级且处于READY状态的线程。如果状态READY 中没有其他具有相同优先级的线程，则当前线程继续执行并且不会发生线程切换。osThreadYield不会将线程设置为BLOCKED状态。因此，即使处于READY状态的线程可用，也不会调度具有较低优先级的线程
+可能的osStatus_t返回值：
+
+osOK：控制已成功传递到下一个线程。
+osError:发生了未指定的错误。
+osErrorISR：无法从中断服务例程中调用函数osThreadYield
+
+22 osStatus_t osThreadSuspend(osThreadId_t 	thread_id	)
+挂起线程
+已被阻塞的线程将从任何等待列表中删除，并在恢复时准备就绪
+可能的osStatus_t返回值：
+
+osOK：线程已成功挂起。
+osErrorParameter: thread_id为NULL或无效。
+osErrorResource：线程处于无效状态。
+osErrorISR：无法从中断服务例程中调用函数osThreadSuspend
+
+23 osStatus_t osThreadResume	(osThreadId_t 	thread_id	)
+就绪线程
+可能的osStatus_t返回值：
+
+osOK：线程恢复成功。
+osErrorParameter: thread_id为NULL或无效。
+osErrorResource：线程处于无效状态。
+osErrorISR：无法从中断服务例程中调用函数osThreadResume
+
+24 osStatus_t osThreadDetach	(	osThreadId_t 	thread_id	)
+将线程属性改为分离线程
+可能的osStatus_t返回值：
+
+osOK：指定线程的属性已更改为分离成功。
+osErrorParameter: thread_id为NULL或无效。
+osErrorResource：线程处于无效状态。
+osErrorISR：无法从中断服务例程中调用函数osThreadDetach
+
+25 osStatus_t osThreadJoin	(	osThreadId_t 	thread_id	)
+函数osThreadJoin等待thread_id指定的线程终止并重新加入（+osThreadNew）
+可能的osStatus_t返回值：
+
+osOK：如果线程已经被终止并加入，或者一旦线程被终止并且加入操作成功。
+osErrorParameter: thread_id为NULL或无效。
+osErrorResource：线程处于无效状态（例如：不可加入）。
+osErrorISR：无法从中断服务例程中调用函数osThreadJoin
+
+26 __NO_RETURN void osThreadExit	(	void 		)
+函数osThreadExit终止调用线程
+
+27 osStatus_t osThreadTerminate	(	osThreadId_t 	thread_id	)
+函数osThreadTerminate从活动线程列表中删除参数thread_id指定的线程。如果线程当前正在 RUNNING，则线程终止并继续执行下一个READY线程
+可能的osStatus_t返回值：
+
+osOK：指定线程已成功从活动线程列表中删除。
+osErrorParameter: thread_id为NULL或无效。
+osErrorResource：线程处于无效状态或不存在其他READY线程。
+osErrorISR：无法从中断服务例程中调用函数osThreadTerminate
+
+28 uint32_t osThreadGetStackSize	(	osThreadId_t 	thread_id	)
+函数osThreadGetStackSize返回由参数thread_id指定的线程的堆栈大小。如果出现错误，则返回0
+
+29 uint32_t osThreadGetStackSpace	(	osThreadId_t 	thread_id	)
+函数osThreadGetStackSpace返回参数thread_id指定的线程的未使用堆栈空间的大小。需要开启执行时的栈水印记录（参考线程配置）。如果出现错误，则返回0
+
+30 uint32_t osThreadGetCount	(	void 		)
+函数osThreadGetCount返回活动线程的数量或在出现错误时返回0
+
+31 uint32_t osThreadEnumerate(	osThreadId_t * 	thread_array,//指向用于检索线程 ID 的数组的指针
+				uint32_t 	array_items //	用于检索线程 ID 的数组中的最大项目数
+)
+函数osThreadEnumerate返回枚举线程的数量，或者在出现错误时返回0。
+
+--------------------线程标志---------------------
+除了osThreadFlagsSet之外，不能从中断服务程序调用线程标志管理函数
+
+32 uint32_t osThreadFlagsSet	(	osThreadId_t 	thread_id,
+				uint32_t 	flags 
+)
+函数osThreadFlagsSet为参数thread_id指定的线程设置线程标志。线程返回存储在线程控制块中的标志，如果设置了最高位，则返回错误代码（请参阅标志函数错误代码）
+可能的标志函数错误代码返回值：
+
+osFlagsErrorUnknown：未指定的错误。
+osFlagsErrorParameter:参数thread_id不是有效的线程或标志设置了最高位。
+osFlagsErrorResource：线程处于无效状态
+
+33 uint32_t osThreadFlagsClear	(	uint32_t 	flags	)
+函数osThreadFlagsClear清除当前运行线程的指定标志。它在清除之前返回标志，如果设置了最高位，则返回错误代码（请参阅标志功能错误代码
+可能的标志函数错误代码返回值：
+
+osFlagsErrorUnknown：未指定的错误，即未从正在运行的线程上下文中调用。
+osFlagsErrorParameter：参数标志设置了最高位。
+osFlagsErrorISR：无法从中断服务例程中调用函数osThreadFlagsClear
+
+34 uint32_t osThreadFlagsGet	(	void 		)
+获取线程设置的标志，线程未活动返回0
+
+35 uint32_t osThreadFlagsWait	(uint32_t 	flags,
+			uint32_t 	options,//osFlagsWaitAny，osFlagsWaitAll（会自动清除），osFlagsNoClear（手动清除）
+			uint32_t 	timeout 
+)
+该函数在清除之前返回标志，如果设置了最高位，则返回错误代码（请参阅标志函数错误代码）。
+
+可能的标志函数错误代码返回值：
+
+osFlagsErrorUnknown：未指定的错误，即未从正在运行的线程上下文中调用。
+osFlagsErrorTimeout：在给定时间内尚未设置等待的标志。
+osFlagsErrorResource：未指定超时时未设置等待标志。
+osFlagsErrorParameter：参数标志设置了最高位。
+
+--------------------事件标志---------------------
+函数osEventFlagsSet、osEventFlagsClear、osEventFlagsGet和osEventFlagsWait可以从中断服务程序中调用
+
+36 osEventFlagsId_t osEventFlagsNew	(	const osEventFlagsAttr_t * 	attr//事件标志属性；NULL：默认值	
+)
+函数osEventFlagsNew创建一个新的事件标志对象，用于跨线程发送事件，并返回指向事件标志对象标识符或出错时返回NULL的指针。它可以在 RTOS 启动之前安全地调用（调用osKernelStart），但不能在初始化之前（调用osKernelInitialize
+不能从中断服务程序调用
+
+37 uint32_t osEventFlagsSet	(osEventFlagsId_t 	ef_id,
+			uint32_t 	flags 
+)
+等待标志设置的具有最高优先级的线程将被通知从BLOCKED状态恢复。该函数返回存储在事件控制块中的事件标志或错误代码（设置最高位，请参阅标志函数错误代码）。当将选项osFlagsNoClear提供给osEventFlagsWait调用时，可以按优先级顺序唤醒更多线程。
+
+可能的标志函数错误代码返回值：
+
+osFlagsErrorUnknown：未指定的错误。
+osFlagsErrorParameter：参数ef_id未标识有效的事件标志对象或标志设置了最高位。
+osFlagsErrorResource：事件标志对象处于无效状态
+
+这个函数可以从中断服务程序中调用
+
+38 uint32_t osEventFlagsClear	(osEventFlagsId_t 	ef_id,
+			uint32_t 	flags 
+)
+功能osEventFlagsClear清除由参数指定的事件标志的标志目的是通过参数指定在事件标志ef_id。该函数返回清除前的事件标志或错误代码（设置最高位，请参阅标志函数错误代码）。
+
+可能的标志函数错误代码返回值：
+
+osFlagsErrorUnknown：未指定的错误。
+osFlagsErrorParameter：参数ef_id未标识有效的事件标志对象或标志设置了最高位。
+osFlagsErrorResource：事件标志对象处于无效状态
+
+这个函数可以从中断服务程序中调用
+
+39 uint32_t osEventFlagsGet	(	osEventFlagsId_t 	ef_id	)
+返回指定的事件标志对象中设置的事件标志或者错误返回0
+这个函数可以从中断服务程序中调用
+
+40 uint32_t osEventFlagsWait	(osEventFlagsId_t 	ef_id,
+			uint32_t 	flags,
+			uint32_t 	options,//osFlagsWaitAny，osFlagsWaitAll，osFlagsNoClear
+			uint32_t 	timeout 
+)
+该函数返回清除前的事件标志或错误代码（设置最高位，请参阅标志函数错误代码）。
+
+可能的标志函数错误代码返回值：
+
+osFlagsErrorUnknown：未指定的错误。
+osFlagsErrorTimeout：在给定时间内尚未设置等待的标志。
+osFlagsErrorResource：未指定超时时未设置等待标志。
+osFlagsErrorParameter：参数ef_id未标识有效的事件标志对象或标志设置了最高位
+
+41 osStatus_t osEventFlagsDelete	(	osEventFlagsId_t 	ef_id	)
+函数osEventFlagsDelete删除由参数ef_id指定的事件标志对象，并释放为事件标志处理获得的内部存储器。在此调用之后，ef_id不再有效且无法使用。这可能会导致等待此事件对象标志的线程饿死。该ef_id可以再次使用该函数来创建osEventFlagsNew。
+
+可能的osStatus_t返回值：
+
+osOK：指定的事件标志对象已被删除。
+osErrorISR: osEventFlagsDelete不能从中断服务例程中调用。
+osErrorParameter:参数ef_id为NULL或无效。
+osErrorResource：事件标志对象处于无效状态
+
+不能从中断服务程序中调用此函数。
+
+
+42 const char * osEventFlagsGetName	(	osEventFlagsId_t 	ef_id	)
+返回标志对象的名称或者错误返回NULL
+
+不能从中断服务程序中调用此函数
+
+
+--------------------通用等待函数---------------------
+不能从中断服务程序中调用通用等待函数
+
+43 osStatus_t osDelay	(	uint32_t 	ticks	)
+
+可能的osStatus_t返回值：
+
+osOK：执行延时。
+osErrorParameter：无法处理时间（零值）。
+osErrorISR: osDelay不能从中断服务程序中调用。
+osError: osDelay无法执行（内核未运行或不存在READY线程）
+
+不能从中断服务程序中调用此函数。
+
+
+44 osStatus_t osDelayUntil	(	uint32_t 	ticks	)
+绝对延时，基于内核计数溢出的处理
+可能的osStatus_t返回值：
+
+osOK：执行延时。
+osErrorParameter：时间无法处理（越界）。
+osErrorISR: osDelayUntil不能从中断服务程序中调用。
+osError: osDelayUntil无法执行（内核未运行或不存在READY线程）
+
+不能从中断服务程序中调用此函数
+
+--------------------定时器管理---------------------
+不能从中断服务程序中调用定时器管理功能
+
+45 osTimerId_t osTimerNew	(osTimerFunc_t 	func,
+			osTimerType_t 	type,//osTimerOnce用于一次性行为或osTimerPeriodic用于周期性行为
+			void * 	argument,//定时器回调函数的参数
+			const osTimerAttr_t * 	attr //NULL默认值
+)
+函数osTimerNew创建一个一次性或周期性计时器，并将其与带有参数的回调函数相关联。计时器处于停止状态，直到它以osTimerStart启动。该函数可以在 RTOS 启动之前安全调用（调用osKernelStart），但不能在初始化之前（调用osKernelInitialize）
+函数osTimerNew返回指向计时器对象标识符的指针，或者在出现错误时返回NULL
+
+46 *const char * osTimerGetName	(	osTimerId_t 	timer_id	)
+返回计时器name或者错误返回NULL
+
+47 osStatus_t osTimerStart	(	osTimerId_t 	timer_id,
+				uint32_t 	ticks 
+)
+可能的osStatus_t返回值：
+
+osOK：指定的定时器已启动或重新启动。
+osErrorISR: osTimerStart不能从中断服务例程中调用。
+osErrorParameter:参数timer_id为NULL或无效或刻度不正确。
+osErrorResource：计时器处于无效状态。
+
+不能从中断服务程序中调用此函数
+
+48 osStatus_t osTimerStop	(	osTimerId_t 	timer_id	)
+可能的osStatus_t返回值：
+
+osOK：指定的计时器已停止。
+osErrorISR： 无法从中断服务例程中调用osTimerStop。
+osErrorParameter:参数timer_id为NULL或无效。
+osErrorResource：计时器未运行（您只能停止正在运行的计时器）
+
+不能从中断服务程序中调用此函数
+
+49 uint32_t osTimerIsRunning	(	osTimerId_t 	timer_id	)	
+函数osTimerIsRunning检查由参数timer_id指定的计时器是否正在运行。如果计时器正在运行，则返回1，如果计时器停止或发生错误，则返回0
+
+不能从中断服务程序中调用此函数
+
+50 osStatus_t osTimerDelete	(	osTimerId_t 	timer_id	)
+函数osTimerDelete删除由参数timer_id指定的计时器。
+
+可能的osStatus_t返回值：
+
+osOK：指定的定时器已被删除。
+osErrorISR: osTimerDelete不能从中断服务例程中调用。
+osErrorParameter:参数timer_id为NULL或无效。
+osErrorResource：计时器处于无效状态
+
+不能从中断服务程序中调用此函数
+
+--------------------互斥管理---------------------
+互斥管理函数不能从中断服务程序(ISR) 中调用，这与可以从 ISR 中释放的二进制信号量不同
+
+51 volatile osRtxMutex_t  Spi_Muttex_tcb;//定义内存大小位置，自动分配不需定义
+const osMutexAttr_t Spi_Mutex_attr={
+	.name = "SpiMutex",
+	.attr_bits = 0,//osMutexRecursive（多次调用，信号量类似），osMutexPrioInherit（提高优先级立即执行线程），osMutexRobust（当线程被终止互锁自动释放）
+	.cb_mem =(void*)&Spi_Muttex_tcb,//自动分配写NULL
+  	.cb_size = sizeof(Spi_Muttex_tcb)//自动分配写0
+};
+osMutexId_t Spi_Muttex_ID;
+Spi_Muttex_ID = osMutexNew(&Spi_Mutex_attr);//创建互,括号写成NULL是自动分配成所有默认属性
+osMutexNew可以在 RTOS 启动之前安全地调用（调用osKernelStart），但不能在初始化之前（调用osKernelInitialize）
+
+52 *const char * osMutexGetName	(	osMutexId_t 	mutex_id	)
+返回名称字符串指针或者错误返回NULL
+不能从中断服务程序中调用此函数
+
+53 osStatus_t osMutexAcquire	(	osMutexId_t 	mutex_id,
+				uint32_t 	timeout 
+)
+阻塞函数osMutexAcquire等待直到参数mutex_id指定的互斥对象变为可用。如果没有其他线程获得互斥锁，该函数会立即返回并阻塞互斥锁对象
+可能的osStatus_t返回值：
+
+osOK：已获得互斥锁。
+osErrorTimeout:无法在给定时间内获得互斥锁。
+osErrorResource：未指定超时时无法获取互斥锁。
+osErrorParameter:参数mutex_id为NULL或无效。
+osErrorISR：不能从中断服务例程中调用
+
+54 osStatus_t osMutexRelease	(	osMutexId_t 	mutex_id	)
+函数osMutexRelease释放由参数mutex_id指定的互斥锁。当前等待此互斥锁的其他线程将被置于READY状态。
+
+可能的osStatus_t返回值：
+
+osOK：互斥锁已正确释放。
+osErrorResource：无法释放互斥锁（未获取互斥锁或正在运行的线程不是所有者）。
+osErrorParameter:参数mutex_id为NULL或无效。
+osErrorISR: osMutexRelease不能从中断服务例程中调用
+
+55 osThreadId_t osMutexGetOwner	(	osMutexId_t 	mutex_id	)
+函数osMutexGetOwner返回获取参数mutex_id指定的互斥锁的线程的线程 ID 。如果发生错误或互斥锁未被任何线程阻塞，则返回NULL
+
+56 osStatus_t osMutexDelete	(	osMutexId_t 	mutex_id	)
+函数osMutexDelete删除由参数mutex_id指定的互斥对象。它释放为互斥处理获得的内部内存。此调用后，mutex_id不再有效且无法使用。可以使用函数osMutexNew再次创建互斥锁。
+
+可能的osStatus_t返回值：
+
+osOK：互斥对象已被删除。
+osErrorParameter:参数mutex_id为NULL或无效。
+osErrorResource：互斥锁处于无效状态。
+osErrorISR: osMutexDelete不能从中断服务例程中调用
+
+--------------------信号量---------------------
+函数osSemaphoreAcquire、osSemaphoreGetCount和osSemaphoreRelease可以从中断服务程序中调用
+
+57 volatile osRtxSemaphore_t  Spi_Semaphore_tcb;//定义内存大小位置，自动分配不需定义
+const  osSemaphoreAttr_t Spi_Semaphore_attr={
+	.name = "SpiSemaphore",
+	.attr_bits = 0,
+	.cb_mem =(void*)&Spi_Semaphore_tcb,//自动分配写NULL
+  	.cb_size = sizeof(Spi_Semaphore_tcb)//自动分配写0
+};
+osSemaphoreId_t Spi_Semaphore_ID;
+Spi_Semaphore_ID = osSemaphoreNew(2U，//最大可用信号量
+			              2U，//可用初始数量
+				&Spi_Semaphore_attr//NULL//属性默认
+);
+信号量 ID 供其他函数参考或在出错时为 NULL
+它可以在 RTOS 启动之前安全地调用（调用osKernelStart），但不能在初始化之前（调用osKernelInitialize）
+
+58 const char * osSemaphoreGetName	(	osSemaphoreId_t 	semaphore_id	)
+名称字符串指针或出错返回NULL
+
+59 osStatus_t osSemaphoreAcquire	(	osSemaphoreId_t 	semaphore_id,
+					uint32_t 	timeout 
+)
+可能的osStatus_t返回值：
+
+osOK：令牌已获得，令牌计数递减。
+osErrorTimeout:无法在给定时间内获取令牌。
+osErrorResource：未指定超时时无法获取令牌。
+osErrorParameter:参数semaphore_id为NULL或无效
+
+如果参数timeout设置为0 ，则可以从中断服务程序调用。
+
+60 osStatus_t osSemaphoreRelease	(	osSemaphoreId_t 	semaphore_id	)
+可能的osStatus_t返回值：
+
+osOK：令牌已释放且计数增加。
+osErrorResource：无法释放令牌（已达到最大令牌数）。
+osErrorParameter:参数semaphore_id为NULL或无效
+
+这个函数可以从中断服务程序中调用
+
+61 uint32_t osSemaphoreGetCount	(	osSemaphoreId_t 	semaphore_id	)
+函数osSemaphoreGetCount返回由参数semaphore_id指定的信号量对象的可用标记数。如果出现错误，则返回0
+这个函数可以从中断服务程序中调用
+
+62 osStatus_t osSemaphoreDelete	(	osSemaphoreId_t 	semaphore_id	)
+函数osSemaphoreDelete删除由参数semaphore_id指定的信号量对象。它释放为信号量处理获得的内部内存。此调用后，semaphore_id不再有效且无法使用。可以使用函数osSemaphoreNew再次创建信号量
+
+可能的osStatus_t返回值：
+
+osOK：信号量对象已被删除。
+osErrorParameter:参数semaphore_id为NULL或无效。
+osErrorResource：信号量处于无效状态。
+osErrorISR: osSemaphoreDelete不能从中断服务例程中调用
+
+不能从中断服务程序中调用此函数
+
+--------------------内存池---------------------
+内存 池是线程安全的固定大小的内存块。它们的运行速度比动态分配的堆快得多，并且不会受到碎片的影响。由于线程安全，它们可以从线程和 ISR 中访问
+
+63
+typedef struct
+{
+
+
+
+}USER_MEMPool_STRUCT//单个池的定义
+ volatile osRtxMemoryPool_t  Display_Pool_tcb;
+volatile uint32_t Display_Poolmem[osRtxMemoryPoolMemSize(32, sizeof(USER_MEMPool_STRUCT))/4U];
+const  osMemoryPoolAttr_t DisplayPool_attr={
+	 .name = "DisplayPool",
+	 .attr_bits = 0,
+	 .cb_mem=(void*)&Display_Pool_tcb
+	 .cb_size=sizeof(Display_Pool_tcb);
+	 .mp_mem = (void*)Display_Poolmem,
+	 .mp_size = sizeof(Display_Poolmem)
+	
+};
+osMemoryPoolId_t  Display_PoolID=NULL;
+ Display_PoolID = osMemoryPoolNew (32, sizeof (USER_MEMPool_STRUCT), &DisplayPool_attr);
+返回内存池指针或错误返回NULL。它可以在 RTOS 启动之前安全地调用（调用osKernelStart），但不能在初始化之前（调用osKernelInitialize）
+不能从中断服务程序中调用此函数
+
+
+64 const char * osMemoryPoolGetName	(	osMemoryPoolId_t 	mp_id	)
+返回内存池指针或错误返回NULL
+不能从中断服务程序中调用此函数
+
+65 void * osMemoryPoolAlloc	(	osMemoryPoolId_t 	mp_id,
+				uint32_t 	timeout 
+)
+阻塞函数osMemoryPoolAlloc分配内存池参数mp_id并返回指向已分配内存地址的指针，如果出错则返回0，如果没有可用内存，则为 NULL
+
+66 osStatus_t osMemoryPoolFree	(	osMemoryPoolId_t 	mp_id,
+					void * 	block //要返回到内存池的已分配内存块的地址
+)
+如果另一个线程正在等待内存可用，则该线程将进入READY状态。
+
+可能的osStatus_t返回值：
+
+osOK：内存已被释放。
+osErrorParameter:参数mp_id为NULL或无效，块指向无效内存。
+osErrorResource：内存池处于无效状态
+
+67 uint32_t osMemoryPoolGetCapacity	(	osMemoryPoolId_t 	mp_id	)
+返回最大内存块数或者出错返回0
+
+68 uint32_t osMemoryPoolGetBlockSize	(	osMemoryPoolId_t 	mp_id	)
+返回最大内存块大小或者出错返回0
+
+69 uint32_t osMemoryPoolGetCount	(	osMemoryPoolId_t 	mp_id	)
+返回使用了的内存块数或者出错返回0
+
+70 uint32_t osMemoryPoolGetSpace	(	osMemoryPoolId_t 	mp_id	)
+返回可用的内存块数或者出错返回0
+
+71 osStatus_t osMemoryPoolDelete	(	osMemoryPoolId_t 	mp_id	)
+函数osMemoryPoolDelete删除由参数mp_id指定的内存池对象。它释放为内存池处理获得的内部内存。此调用后，mp_id不再有效且无法使用。可以使用函数osMemoryPoolNew再次创建内存池
+可能的osStatus_t返回值：
+
+osOK：内存池对象已被删除。
+osErrorParameter:参数mp_id为NULL或无效。
+osErrorResource：内存池处于无效状态。
+osErrorISR: osMemoryPoolDelete不能从中断服务例程中调用
+
+不能从中断服务程序中调用此函数。
+
+--------------------消息队列---------------------
+函数osMessageQueuePut、osMessageQueueGet、osMessageQueueGetCapacity、osMessageQueueGetMsgSize、osMessageQueueGetCount、osMessageQueueGetSpace可以从中断服务例程中调用
+
+72 volatile osRtxMessage_t  Display_Mq_tcb;
+volatile uint32_t Display_mem[osRtxMessageQueueMemSize(32, sizeof(USER_MSGQUEUE_STRUCT))/4U];
+const  osMessageQueueAttr_t DisplayMq_attr={
+	 .name = "DisplayMq",
+	 .attr_bits = 0,
+	 .mq_mem = (void*)Display_mem,
+	 .mq_size = sizeof(Display_mem)
+
+	.attr_bits=0,
+	.cb_mem=NULL,
+	.cb_size=0
+};
+osMessageQueueId_t  Display_Mq=NULL;
+Display_Mq = osMessageQueueNew(32,sizeof(USER_MSGQUEUE_STRUCT),&DisplayMq_attr);
+返回消息队列id或者出错返回NULL
+可以在内核初始化后使用osKernelInitialize调用该函数。可以在使用osKernelStart启动 RTOS 内核之前创建消息队列对象
+
+不能从中断服务程序中调用此函数
+
+73 const char * osMessageQueueGetName	(	osMessageQueueId_t 	mq_id	)
+返回内存池指针或错误返回NULL
+不能从中断服务程序中调用此函数
+
+74 osStatus_t osMessageQueuePut	(	osMessageQueueId_t 	mq_id,
+					const void * 	msg_ptr,//消息块的首地址
+					uint8_t 	msg_prio,
+					uint32_t 	timeout 
+)
+阻塞函数osMessageQueuePut将msg_ptr指向的消息放入参数mq_id指定的消息队列中。参数msg_prio用于根据插入时的优先级（数字越大表示优先级越高）对消息进行排序
+
+可能的osStatus_t返回值：
+
+osOK：消息已放入队列。
+osErrorTimeout：消息无法在给定时间内放入队列（等待时间语义）。
+osErrorResource：队列中没有足够的空间（尝试语义）。
+osErrorParameter：参数mq_id为NULL或无效的，在 ISR 中指定的非零超时
+
+如果参数timeout设置为0 ，则可以从中断服务程序调用
+
+75 osStatus_t osMessageQueueGet	(	osMessageQueueId_t 	mq_id,
+					void * 	msg_ptr,//存放消息的指针
+					uint8_t * 	msg_prio,
+					uint32_t 	timeout 
+)
+可能的osStatus_t返回值：
+
+osOK：消息已放入队列。
+osErrorTimeout：消息无法在给定时间内放入队列（等待时间语义）。
+osErrorResource：队列中没有足够的空间（尝试语义）。
+osErrorParameter：参数mq_id为NULL或无效的，在 ISR 中指定的非零超时
+
+如果参数timeout设置为0 ，则可以从中断服务程序调用
+
+76 uint32_t osMessageQueueGetCapacity	(	osMessageQueueId_t 	mq_id	)
+返回消息队列的最大消息数或错误返回0
+
+77 uint32_t osMessageQueueGetMsgSize	(	osMessageQueueId_t 	mq_id	)
+返回消息队列的最大字节数或错误返回0
+
+78 uint32_t osMessageQueueGetCount	(	osMessageQueueId_t 	mq_id	)
+返回消息队列的已用数或错误返回0
+
+79 uint32_t osMessageQueueGetSpace	(	osMessageQueueId_t 	mq_id	)
+返回消息队列的未用数或错误返回0
+
+80 osStatus_t osMessageQueueReset	(	osMessageQueueId_t 	mq_id	)
+函数osMessageQueueReset重置由参数mq_id指定的消息队列。
+
+可能的osStatus_t返回值：
+
+osOK：消息队列已经休息。
+osErrorParameter:参数mq_id为NULL或无效。
+osErrorResource：消息队列处于无效状态。
+osErrorISR: osMessageQueueReset不能从中断服务例程中调用
+
+81 osStatus_t osMessageQueueDelete	(	osMessageQueueId_t 	mq_id	)
+函数osMessageQueueDelete删除由参数mq_id指定的消息队列对象。它释放为消息队列处理获得的内部内存
+此调用后，mq_id不再有效且无法使用。可以使用函数osMessageQueueNew再次创建消息队列。
+
+可能的osStatus_t返回值：
+
+osOK：消息队列对象已被删除。
+osErrorParameter:参数mq_id为NULL或无效。
+osErrorResource：消息队列处于无效状态。
+osErrorISR: osMessageQueueDelete不能从中断服务例程中调用
+
+--------------------操作系统滴答api---------------------
+所有 Cortex-M 处理器都提供统一的系统节拍定时器，通常用于生成 RTOS 内核节拍。Cortex-A 处理器没有实现统一的系统定时器，需要特定于设备的实现
+
+82 int32_t OS_Tick_Setup	(	uint32_t 	freq,
+				IRQHandler_t 	handler 
+)
+定义滴答时钟频率，返回0 成功，-1 错误
+
+83 int32_t OS_Tick_Enable	(	void 		)
+启用并启动 OS Tick 定时器以生成周期性的 RTOS Kernel Tick 中断
+
+84 int32_t OS_Tick_Disable	(	void 		)
+停止 OS Tick 计时器并禁用 RTOS Kernel Tick 中断的生成
+
+85 int32_t OS_Tick_AcknowledgeIRQ	(	void 		)
+确认 OS Tick 定时器待处理中断函数的执行，例如清除挂起中断标志
+
+86 int32_t OS_Tick_GetIRQn	(	void 		)
+获取 OS Tick 计时器 IRQ 编号；SysTick_IRQn中断编号
+
+87 uint32_t OS_Tick_GetClock	(	void 		)
+获取 OS Tick 定时器时钟频率；SystemCoreClock值
+
+88 
+uint32_t OS_Tick_GetInterval	(	void 		)
+获取 OS Tick 计时器间隔重新加载值；SysTick->LOAD + 1U
+
+89 
+uint32_t OS_Tick_GetCount	(	void 		)
+获取 OS Tick 计时器计数器值；load - SysTick->VAL（递减情况）
+
+90 OS_Tick_GetOverflow	(	void 		)
+获取 OS Tick 计时器溢出状态（1 - 溢出，0 - 无溢出(SysTick->CTRL >> 16) & 1U
+
+
+--------------------内核检测系统错误或没有就绪任务---------------------
+
+uint32_t osRtxErrorNotify	(	uint32_t 	代码，
+void * 	object_id 
+)
+在运行期间可以检测到一些系统错误情况。如果 RTX 内核检测到运行时错误，它会为参数object_id指定的对象调用运行时错误函数osRtxErrorNotify
+
+
+void  osRtxIdleThread ( void *argument)
+当没有其他线程准备好运行时，函数osRtxIdleThread由 RTX 内核执行
+您可以更改osRtxIdleThread函数的代码以将 CPU 置于省电或空闲模式，请参阅Tick-less Low-Power Operation
+
+
+--------------------事件函数---------------------
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,16 @@
+C语言 谭浩强（书）
+stm32 内核外设（数据手册），汇编FPGA（初学）、SRAM、flash空间分布，磁盘管理Fatfs；
+以太网lwip；USB;
+freeRTOS（正点原子）
+电机、蓝牙、Lvgl、摄像头；
+github/svn、（IDE ：VS code）、source insight
+C++（IDE ：VS code）、
+dos系统：cmdshell(早期dos)、powershell;（搭建VS编程Keil，编写批处理：交叉编程）
+linux、bashshell/zsh、python（初学）
+图形界面LVGL（单片机轻量化）\qt（linux）;
+AI(Cursor+Opus4)
+
+
+模数电、微机原理、自动控制
+线性代数、矩阵、数学、自动化
+题材网站：LeetCode
